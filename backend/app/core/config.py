@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     algo_version: str = "net-0.1.0"
     price_version: str = "2026-10-demo"
     rules_version: str = "rules-0.1.0"
+    # MC-RSK-02 ring rule: members who joined within this many days, invoices that are whole
+    # multiples of this many major units.
+    ring_recent_days: int = 90
+    ring_round_major: int = 1000
 
     allowed_origins: list[str] = ["http://localhost:3010", "http://127.0.0.1:3010"]
     cookie_name: str = "mesh_session"

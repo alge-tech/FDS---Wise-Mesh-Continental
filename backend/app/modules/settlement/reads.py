@@ -34,6 +34,7 @@ from app.modules.settlement.schemas import (
     SettlementDetail,
     TransferView,
 )
+from app.modules.statements import content as statement_content
 from app.modules.statements.models import Statement
 
 _ACCOUNT = {
@@ -64,8 +65,8 @@ def member_settlement(
     if statement is None:
         return None
     c = statement.content
-    currency = str(c["settlement_currency"])
-    debit, credit = int(c["debit_minor"]), int(c["credit_minor"])
+    currency = statement_content.settlement_currency(c)
+    debit, credit = statement_content.debit_credit(c)
     status = {
         RunStatus.COMMITTED: "SETTLED",
         RunStatus.PREPARED: "FUNDS_HELD",
@@ -77,7 +78,7 @@ def member_settlement(
             Hold.run_id == run.id, Hold.member_id == member_id, Hold.status == HoldStatus.ACTIVE
         )
     )
-    own = [str(i["invoice_id"]) for i in c["invoices"]]
+    own = list(statement_content.invoice_ids(c))
     counts = dict(
         session.execute(
             select(InvoiceOutcome.outcome, func.count())

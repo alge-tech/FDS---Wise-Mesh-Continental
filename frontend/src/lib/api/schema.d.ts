@@ -539,6 +539,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/members/me/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Settings */
+        patch: operations["update_settings_v1_members_me_settings_patch"];
+        trace?: never;
+    };
     "/v1/network/me": {
         parameters: {
             query?: never;
@@ -638,6 +655,26 @@ export interface paths {
         get: operations["run_v1_runs__run_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/withdrawals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Withdraw
+         * @description MC-APR-03: withdraw own invoices from the run; the run recomputes.
+         */
+        post: operations["withdraw_v1_runs__run_id__withdrawals_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1317,6 +1354,8 @@ export interface components {
             /** Settlement Currency */
             settlement_currency: string;
             state: components["schemas"]["MemberState"];
+            /** Team */
+            team: components["schemas"]["TeamMember"][];
         };
         /** MemberRow */
         MemberRow: {
@@ -1645,6 +1684,25 @@ export interface components {
             savings: components["schemas"]["Money"];
         };
         /**
+         * SettingsUpdate
+         * @description MC-ONB-02. Omit a field to keep it; send null to remove a limit or threshold.
+         *
+         *     Amounts are minor units of the settlement currency in force after this change.
+         */
+        SettingsUpdate: {
+            /** Maker Checker Minor */
+            maker_checker_minor?: number | null;
+            /** Payable Limit Minor */
+            payable_limit_minor?: number | null;
+            /**
+             * Reason Code
+             * @default SETTINGS_UPDATED
+             */
+            reason_code: string;
+            /** Settlement Currency */
+            settlement_currency?: string | null;
+        };
+        /**
          * SettlementDetail
          * @description Wise staff view of a run's settlement: holds, jobs, transfers and clearing.
          */
@@ -1678,39 +1736,119 @@ export interface components {
              */
             seed: number;
         };
-        /** StatementView */
-        StatementView: {
+        /** StatementApproval */
+        StatementApproval: {
             /** Approval Count */
             approval_count: number;
             /** Can Approve */
             can_approve: boolean;
-            /** Content */
-            content: {
-                [key: string]: unknown;
-            };
+            /**
+             * Deadline
+             * Format: date-time
+             */
+            deadline: string;
+            /** Required Approvers */
+            required_approvers: number;
+        };
+        /** StatementCounterparty */
+        StatementCounterparty: {
+            /** Invoices */
+            invoices: components["schemas"]["StatementInvoice"][];
+            /** Name */
+            name: string;
+        };
+        /** StatementFxLeg */
+        StatementFxLeg: {
+            from_amount: components["schemas"]["Money"];
+            /** Rate */
+            rate: string;
+            to_amount: components["schemas"]["Money"];
+        };
+        /** StatementInstruction */
+        StatementInstruction: {
+            amount: components["schemas"]["Money"];
+            /** Counterparty */
+            counterparty: string;
+            /** Reference */
+            reference: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "DEBIT" | "CREDIT" | "NONE";
+        };
+        /** StatementInvoice */
+        StatementInvoice: {
+            cancelled: components["schemas"]["Money"];
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "PAYABLE" | "RECEIVABLE";
+            /**
+             * Invoice Id
+             * Format: uuid
+             */
+            invoice_id: string;
+            /** Invoice Number */
+            invoice_number: string;
+            outstanding: components["schemas"]["Money"];
+            residual: components["schemas"]["Money"];
+            /** Version */
+            version: number;
+        };
+        /** StatementPricing */
+        StatementPricing: {
+            actual: components["schemas"]["Money"];
+            baseline: components["schemas"]["Money"];
+            /** Fee Share Bps */
+            fee_share_bps: number;
+            net_benefit: components["schemas"]["Money"];
+            /** Standard Rate Bps */
+            standard_rate_bps: number;
+        };
+        /**
+         * StatementView
+         * @description PRD "Statement payload". `content_hash` covers the economic fields only (not the IDs,
+         *     attempt, reference or approval block), so it survives a recompute that changes nothing.
+         */
+        StatementView: {
+            approval: components["schemas"]["StatementApproval"];
+            /** Attempt */
+            attempt: number;
+            /** Can Withdraw */
+            can_withdraw: boolean;
+            carried: components["schemas"]["Money"];
             /** Content Hash */
             content_hash: string;
+            /** Counterparties */
+            counterparties: components["schemas"]["StatementCounterparty"][];
             /** Current */
             current: boolean;
             /** Current Statement Id */
             current_statement_id: string | null;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            expires_at: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
+            fee: components["schemas"]["Money"];
+            /** Fx Legs */
+            fx_legs: components["schemas"]["StatementFxLeg"][];
+            gross_payable: components["schemas"]["Money"];
+            gross_receivable: components["schemas"]["Money"];
+            instruction: components["schemas"]["StatementInstruction"];
             /**
              * Issued At
              * Format: date-time
              */
             issued_at: string;
-            /** Required Approvers */
-            required_approvers: number;
+            /**
+             * Member Id
+             * Format: uuid
+             */
+            member_id: string;
+            net: components["schemas"]["Money"];
+            /** Price Version */
+            price_version: string;
+            pricing: components["schemas"]["StatementPricing"];
+            /** Rules Version */
+            rules_version: string;
             /**
              * Run Id
              * Format: uuid
@@ -1718,6 +1856,27 @@ export interface components {
             run_id: string;
             /** Run Status */
             run_status: string;
+            savings: components["schemas"]["Money"];
+            /**
+             * Statement Id
+             * Format: uuid
+             */
+            statement_id: string;
+            /** Summary */
+            summary: string;
+        };
+        /** TeamMember */
+        TeamMember: {
+            /** Display Name */
+            display_name: string;
+            /** Email */
+            email: string;
+            role: components["schemas"]["Role"];
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
         };
         /** TransferView */
         TransferView: {
@@ -1787,6 +1946,16 @@ export interface components {
              * Format: date-time
              */
             opened_at: string;
+        };
+        /**
+         * WithdrawalRequest
+         * @description MC-APR-03: invoices from the caller's current statement, plus a reason.
+         */
+        WithdrawalRequest: {
+            /** Invoice Ids */
+            invoice_ids: string[];
+            /** Reason Code */
+            reason_code: string;
         };
     };
     responses: never;
@@ -2716,6 +2885,41 @@ export interface operations {
             };
         };
     };
+    update_settings_v1_members_me_settings_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     my_network_v1_network_me_get: {
         parameters: {
             query?: never;
@@ -2850,6 +3054,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    withdraw_v1_runs__run_id__withdrawals_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WithdrawalRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

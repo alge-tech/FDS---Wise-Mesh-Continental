@@ -35,9 +35,31 @@ def own_statement(api: Api, run_id: str) -> dict[str, Any]:
     return ok(api.get(f"/v1/statements/{run['statement_id']}"))  # type: ignore[no-any-return]
 
 
+ENVELOPE = {
+    "statement_id",
+    "run_id",
+    "attempt",
+    "member_id",
+    "approval",
+    "can_withdraw",
+    "content_hash",
+    "run_status",
+    "current",
+    "current_statement_id",
+    "issued_at",
+}
+
+
+def economic(statement: dict[str, Any]) -> dict[str, Any]:
+    """The hashed part of a statement: everything but IDs, attempt, approval and reference."""
+    content = {k: v for k, v in statement.items() if k not in ENVELOPE}
+    content["instruction"] = {k: v for k, v in content["instruction"].items() if k != "reference"}
+    return content
+
+
 def answer(api: Api, s: dict[str, Any], decision: str = "APPROVE") -> Any:
     return api.post(
-        f"/v1/statements/{s['id']}/approvals",
+        f"/v1/statements/{s['statement_id']}/approvals",
         json={"decision": decision, "content_hash": s["content_hash"]},
     )
 
@@ -56,11 +78,28 @@ def test_worked_example_m2_and_m3_gates(make_api: Factory) -> None:
     for code in "abcdef":
         member = make_api(f"finance@member-{code}.test")
         statement = own_statement(member, run["id"])
-        assert statement["content_hash"] == hash_canonical(statement["content"])
-        assert statement["content"]["counterparty"] == "Mesh settlement"
+        assert statement["content_hash"] == "sha256:" + hash_canonical(economic(statement))
+        assert statement["instruction"]["counterparty"] == "Mesh settlement"
+        assert statement["instruction"]["reference"].startswith("MESH-")
+        assert statement["attempt"] == 1
         if code == "a":
-            assert statement["content"]["net_minor"] == -4_000_000
-            assert len(statement["content"]["invoices"]) == 2
+            assert statement["net"] == {"amount_minor": -4_000_000, "currency": "EUR"}
+            assert statement["gross_payable"] == {"amount_minor": 10_000_000, "currency": "EUR"}
+            assert statement["gross_receivable"] == {"amount_minor": 6_000_000, "currency": "EUR"}
+            assert statement["instruction"]["type"] == "DEBIT"
+            # PRD sample: the A->B invoice is 100k outstanding, 60k cancelled, 40k residual.
+            [ab] = [
+                i
+                for c in statement["counterparties"]
+                for i in c["invoices"]
+                if i["direction"] == "PAYABLE"
+            ]
+            assert (
+                ab["outstanding"]["amount_minor"],
+                ab["cancelled"]["amount_minor"],
+                ab["residual"]["amount_minor"],
+            ) == (10_000_000, 6_000_000, 4_000_000)
+            assert sum(len(c["invoices"]) for c in statement["counterparties"]) == 2
         ok(answer(member, statement))
     final = ok(ops.get(f"/v1/admin/runs/{run['id']}"))
     assert final["status"] == "APPROVED"
@@ -148,12 +187,12 @@ def test_privacy_and_stale_statement(make_api: Factory) -> None:
     run = close(ops)
     a, b = make_api("finance@member-a.test"), make_api("finance@member-b.test")
     s = own_statement(a, run["id"])
-    assert b.get(f"/v1/statements/{s['id']}").status_code == 404
+    assert b.get(f"/v1/statements/{s['statement_id']}").status_code == 404
     i = next(i for i in ok(a.get("/v1/invoices"))["items"] if "Aurora" not in i["counterparty"])
     assert make_api("finance@member-e.test").get(f"/v1/invoices/{i['id']}").status_code == 404
     stale = a.post(
-        f"/v1/statements/{s['id']}/approvals",
-        json={"decision": "APPROVE", "content_hash": "0" * 64},
+        f"/v1/statements/{s['statement_id']}/approvals",
+        json={"decision": "APPROVE", "content_hash": "sha256:" + "0" * 64},
     )
     assert stale.json()["error"]["code"] == "STATEMENT_CHANGED"
     assert ok(a.get(f"/v1/runs/{run['id']}"))["computations"] == []
@@ -235,7 +274,7 @@ def test_above_threshold_role_and_distinct_approvers(make_api: Factory, fresh_db
     run = close(ops)
     finance = make_api("finance@member-a.test")
     s = own_statement(finance, run["id"])
-    assert s["required_approvers"] == 2
+    assert s["approval"]["required_approvers"] == 2
     assert answer(finance, s).status_code == 403
     admin = make_api("admin@member-a.test")
     ok(answer(admin, s))
@@ -252,9 +291,10 @@ def test_unchanged_statement_approval_is_carried_forward(make_api: Factory) -> N
     a = make_api("finance@member-a.test")
     ok(answer(a, own_statement(a, run["id"]), "REJECT"))
     new = own_statement(d, run["id"])
-    assert new["id"] != old["id"]
+    assert new["statement_id"] != old["statement_id"]
+    assert new["attempt"] == 2
     assert new["content_hash"] == old["content_hash"]
-    assert new["approval_count"] == 1
+    assert new["approval"]["approval_count"] == 1
     own_run = ok(d.get(f"/v1/runs/{run['id']}"))
     assert own_run["approvals"][0]["method"] == "CARRIED_FORWARD"
 
@@ -338,5 +378,5 @@ def test_completed_statement_disallows_extra_approvals(make_api: Factory) -> Non
     statement = own_statement(a, run["id"])
     ok(answer(a, statement))
     admin = make_api("admin@member-a.test")
-    assert not own_statement(admin, run["id"])["can_approve"]
+    assert not own_statement(admin, run["id"])["approval"]["can_approve"]
     assert answer(admin, statement).status_code == 409

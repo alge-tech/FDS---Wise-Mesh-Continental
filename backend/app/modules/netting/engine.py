@@ -10,10 +10,14 @@ Pipeline (the PRD's order, corrected so FX runs before limits and transfers):
   7. transfers       greedy, kept only if the improvement pass doesn't beat it
   8. outcomes        cancelled + residual = outstanding for every included invoice
   9. validate, hash
+
+Steps 2-6 and 8 run per connected component of the member graph (MC-NET-01), so a
+component whose checks fail is dropped without blocking the others. Step 7 runs per
+currency over every component, because the FX and CARRY pseudo-parties are shared.
 """
 
 from collections import defaultdict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -27,6 +31,7 @@ from app.modules.netting.fx_pass import convert_positions, has_rate, lookup_rate
 from app.modules.netting.types import (
     CARRY_PARTY,
     FX_PARTY,
+    Cancellation,
     Carry,
     DroppedInvoice,
     Edge,
@@ -46,46 +51,63 @@ def run_netting(inp: EngineInput) -> EngineResult:
     input_hash = hash_canonical(_canonical_input(inp))
     seed = int(input_hash[:16], 16)
 
-    excluded = set(inp.excluded_members)
+    eligible, dropped = _eligible_edges(inp, set(inp.excluded_members))
+    parts: list[_Component] = []
+    errors: list[str] = []
+    for component_edges in _components(eligible):
+        try:
+            parts.append(_compute_component(component_edges, inp))
+        except EngineInvariantError as exc:
+            # MC-NET-01: a failing component is left out; the others still net.
+            errors.append(str(exc))
+            dropped.extend(
+                DroppedInvoice(e.invoice_id, "COMPONENT_FAILED") for e in component_edges
+            )
+
+    positions: dict[str, dict[PartyKey, int]] = defaultdict(lambda: defaultdict(int))
+    edges: list[Edge] = []
+    members: list[UUID] = []
+    gross: dict[tuple[UUID, str], tuple[int, int]] = {}
+    cancellations: list[Cancellation] = []
+    outcomes: list[InvoiceOutcome] = []
+    fx_legs: list[FxLeg] = []
+    carries: list[Carry] = []
+    carry_in_used: list[Carry] = []
     limit_excluded: list[UUID] = []
-    while True:
-        edges, dropped = _eligible_edges(inp, excluded)
-        positions, members, gross, carry_in_used = _positions(edges, inp)
-        fx_legs = convert_positions(
-            positions,
-            {str(m): m for m in members},
-            {str(m): inp.settlement_currency[m] for m in members},
-            inp.rates,
-            inp.currency_exponents,
+    cycles_cancelled = 0
+    for part in parts:
+        for currency, parties in part.positions.items():
+            for key, amount in parties.items():
+                positions[currency][key] += amount
+        edges.extend(part.edges)
+        members.extend(part.members)
+        gross.update(part.gross)
+        # Cycle numbers stay unique across components.
+        cancellations.extend(
+            replace(c, cycle_no=c.cycle_no + cycles_cancelled) for c in part.cancellations
         )
-        over = _largest_over_limit(positions, members, inp)
-        if over is None:
-            break
-        excluded.add(over)
-        limit_excluded.append(over)
+        cycles_cancelled += part.cycles
+        outcomes.extend(part.outcomes)
+        fx_legs.extend(part.fx_legs)
+        carries.extend(part.carries)
+        carry_in_used.extend(part.carry_in_used)
+        limit_excluded.extend(part.limit_excluded)
+        dropped.extend(part.dropped)
+    merged = {c: dict(p) for c, p in sorted(positions.items())}
+    members.sort(key=str)
+    outcomes.sort(key=lambda o: str(o.invoice_id))
+    validate.check_zero_sum(merged)
 
-    dropped.extend(
-        DroppedInvoice(e.invoice_id, "LIMIT_EXCEEDED")
-        for e in sorted(inp.edges, key=_edge_key)
-        if (e.payer in limit_excluded or e.receiver in limit_excluded)
-        and e.payer not in inp.excluded_members
-        and e.receiver not in inp.excluded_members
-    )
+    # FX and CARRY pseudo-parties are shared by every component, so transfers are planned
+    # per currency over all of them; planning per component would double those legs.
+    transfers, greedy_count, improved_used, fallback, ops = _plan_transfers(merged, inp)
 
-    cancellations, cycles_cancelled = cancel_cycles(edges)
-    carries = _apply_dust(positions, members, inp)
-    validate.check_zero_sum(positions)
-
-    transfers, greedy_count, improved_used, fallback, ops = _plan_transfers(positions, inp)
-    outcomes = _outcomes(edges, cancellations)
-    validate.check_outcomes(edges, cancellations, outcomes)
-
-    net_positions = _net_positions(positions, members, carries, gross, inp)
+    net_positions = _net_positions(merged, members, carries, gross, inp)
     metrics = Metrics(
         invoice_count=len(edges),
         member_count=len(members),
         gross_minor=_sum_by_currency((e.currency, e.amount_minor) for e in edges),
-        cancelled_minor=_cancelled_by_currency(edges, cancellations),
+        cancelled_minor=_cancelled_by_currency(tuple(edges), cancellations),
         net_minor=_sum_by_currency(
             (p.currency, p.amount_minor)
             for p in net_positions
@@ -99,6 +121,8 @@ def run_netting(inp: EngineInput) -> EngineResult:
         limit_restarts=len(limit_excluded),
         dust_carried=len(carries),
         improvement_ops=ops,
+        component_count=len(parts) + len(errors),
+        failed_components=len(errors),
     )
     result = EngineResult(
         positions=tuple(net_positions),
@@ -114,8 +138,98 @@ def run_netting(inp: EngineInput) -> EngineResult:
         input_hash=input_hash,
         result_hash="",
         seed=seed,
+        component_errors=tuple(errors),
     )
     return replace(result, result_hash=hash_canonical(_canonical_result(result, inp)))
+
+
+@dataclass(frozen=True)
+class _Component:
+    edges: tuple[Edge, ...]
+    positions: dict[str, dict[PartyKey, int]]
+    members: list[UUID]
+    gross: dict[tuple[UUID, str], tuple[int, int]]
+    cancellations: list[Cancellation]
+    cycles: int
+    outcomes: list[InvoiceOutcome]
+    fx_legs: list[FxLeg]
+    carries: list[Carry]
+    carry_in_used: list[Carry]
+    limit_excluded: list[UUID]
+    dropped: list[DroppedInvoice]
+
+
+def _components(edges: tuple[Edge, ...]) -> list[tuple[Edge, ...]]:
+    """MC-NET-01: split the invoices into connected components of the member graph.
+
+    A member's position depends only on its own component, so each one nets on its own.
+    Components come out ordered by their smallest member ID, edges in canonical order.
+    """
+    parent: dict[UUID, UUID] = {}
+
+    def root(m: UUID) -> UUID:
+        parent.setdefault(m, m)
+        while parent[m] != m:
+            parent[m] = parent[parent[m]]
+            m = parent[m]
+        return m
+
+    for e in edges:
+        a, b = root(e.payer), root(e.receiver)
+        if a != b:
+            parent[max(a, b, key=str)] = min(a, b, key=str)
+    groups: dict[UUID, list[Edge]] = defaultdict(list)
+    for e in edges:
+        groups[root(e.payer)].append(e)
+    # Union by smallest ID makes each root its component's smallest member.
+    return [tuple(groups[r]) for r in sorted(groups, key=str)]
+
+
+def _compute_component(component_edges: tuple[Edge, ...], inp: EngineInput) -> _Component:
+    """Steps 2-6 and 8 for one component. Raises EngineInvariantError if a check fails."""
+    excluded: set[UUID] = set()
+    limit_excluded: list[UUID] = []
+    while True:
+        edges = tuple(
+            e for e in component_edges if e.payer not in excluded and e.receiver not in excluded
+        )
+        positions, members, gross, carry_in_used = _positions(edges, inp)
+        fx_legs = convert_positions(
+            positions,
+            {str(m): m for m in members},
+            {str(m): inp.settlement_currency[m] for m in members},
+            inp.rates,
+            inp.currency_exponents,
+        )
+        over = _largest_over_limit(positions, members, inp)
+        if over is None:
+            break
+        excluded.add(over)
+        limit_excluded.append(over)
+
+    cancellations, cycles = cancel_cycles(edges)
+    carries = _apply_dust(positions, members, inp)
+    validate.check_zero_sum(positions)
+    outcomes = _outcomes(edges, cancellations)
+    validate.check_outcomes(edges, cancellations, outcomes)
+    return _Component(
+        edges=edges,
+        positions=positions,
+        members=members,
+        gross=gross,
+        cancellations=cancellations,
+        cycles=cycles,
+        outcomes=outcomes,
+        fx_legs=fx_legs,
+        carries=carries,
+        carry_in_used=carry_in_used,
+        limit_excluded=limit_excluded,
+        dropped=[
+            DroppedInvoice(e.invoice_id, "LIMIT_EXCEEDED")
+            for e in component_edges
+            if e.payer in excluded or e.receiver in excluded
+        ],
+    )
 
 
 # --- 1. canonicalise ------------------------------------------------------------------
@@ -324,19 +438,19 @@ def _to_transfer(currency: str, move: matching.Move) -> PlannedTransfer:
 # --- 8. outcomes ----------------------------------------------------------------------
 
 
-def _outcomes(edges: tuple[Edge, ...], cancellations: list[Any]) -> list[InvoiceOutcome]:
+def _outcomes(edges: tuple[Edge, ...], cancellations: list[Cancellation]) -> list[InvoiceOutcome]:
     cancelled: dict[UUID, int] = defaultdict(int)
     for c in cancellations:
         cancelled[c.invoice_id] += c.amount_minor
     out = []
     for e in sorted(edges, key=lambda e: str(e.invoice_id)):
-        c = cancelled.get(e.invoice_id, 0)
-        residual = e.amount_minor - c
+        done = cancelled.get(e.invoice_id, 0)
+        residual = e.amount_minor - done
         out.append(
             InvoiceOutcome(
                 e.invoice_id,
                 e.amount_minor,
-                c,
+                done,
                 residual,
                 InvoiceOutcomeKind.SETTLED_BY_NETTING
                 if residual == 0
@@ -388,7 +502,9 @@ def _sum_by_currency(items: Any) -> dict[str, int]:
     return dict(sorted(totals.items()))
 
 
-def _cancelled_by_currency(edges: tuple[Edge, ...], cancellations: list[Any]) -> dict[str, int]:
+def _cancelled_by_currency(
+    edges: tuple[Edge, ...], cancellations: list[Cancellation]
+) -> dict[str, int]:
     currency_of = {e.invoice_id: e.currency for e in edges}
     return _sum_by_currency((currency_of[c.invoice_id], c.amount_minor) for c in cancellations)
 

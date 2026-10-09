@@ -62,6 +62,7 @@ from app.modules.runs.models import Cancellation, NettingRun, PlannedTransfer, R
 from app.modules.runs.schemas import RunView
 from app.modules.settlement import plan as stored
 from app.modules.settlement.models import Hold, InvoiceOutcome, SettlementJob
+from app.modules.statements import content as statement_content
 from app.modules.statements.models import Approval, Statement
 from app.modules.windows.models import RunInvoice
 
@@ -424,7 +425,7 @@ def _write_outcomes(
             .with_for_update()
         )
     )
-    expected = {UUID(str(i["invoice_id"])) for s in statements for i in s.content["invoices"]}
+    expected = {i for s in statements for i in statement_content.invoice_ids(s.content)}
     if {i.id for i in locked} != expected:
         raise SettlementInvariantError("locked invoices differ from the approved computation")
     for invoice in locked:

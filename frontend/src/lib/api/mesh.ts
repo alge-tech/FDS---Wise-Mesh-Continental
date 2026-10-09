@@ -33,45 +33,6 @@ export const invoiceFormSchema = z.object({
 	issue_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 	due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
-export const statementContentSchema = z.object({
-	summary: z.string(),
-	settlement_currency: z.string(),
-	net_minor: z.number().int(),
-	carried_minor: z.number().int(),
-	debit_minor: z.number().int(),
-	credit_minor: z.number().int(),
-	invoices: z.array(
-		z.object({
-			invoice_id: z.string(),
-			invoice_number: z.string(),
-			counterparty: z.string(),
-			direction: z.string(),
-			currency: z.string(),
-			outstanding_minor: z.number().int(),
-			cancelled_minor: z.number().int(),
-			residual_minor: z.number().int()
-		})
-	),
-	gross_payable: z.record(z.string(), z.number().int()),
-	gross_receivable: z.record(z.string(), z.number().int()),
-	fx_legs: z.array(
-		z.object({
-			from_currency: z.string(),
-			to_currency: z.string(),
-			from_amount_minor: z.number().int(),
-			to_amount_minor: z.number().int(),
-			rate: z.string()
-		})
-	),
-	pricing: z.object({
-		baseline_minor: z.number().int(),
-		actual_minor: z.number().int(),
-		savings_minor: z.number().int(),
-		fee_minor: z.number().int(),
-		net_benefit_minor: z.number().int(),
-		price_version: z.string()
-	})
-});
 export async function refreshMesh() {
 	await queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'mesh' });
 }

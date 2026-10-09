@@ -16,6 +16,7 @@ from app.modules.network.schemas import GraphEdge, GraphNode, NetworkView, RunCh
 from app.modules.runs import repository
 from app.modules.runs.models import NettingRun, PlannedTransfer
 from app.modules.settlement.schemas import MESH_COUNTERPARTY
+from app.modules.statements import content as statement_content
 from app.modules.statements.models import Statement
 from app.modules.windows.eligibility import eligible
 from app.modules.windows.models import RunInvoice, Window
@@ -72,7 +73,7 @@ def admin_network(session: Session, run_id: UUID | None) -> NetworkView:
             if computation
             else []
         )
-        included = {str(i["invoice_id"]) for s in statements for i in s.content["invoices"]}
+        included = {str(i) for s in statements for i in statement_content.invoice_ids(s.content)}
         frozen = list(
             session.scalars(
                 select(RunInvoice)
@@ -202,7 +203,7 @@ def member_network(session: Session, member_id: UUID) -> NetworkView:
             continue
         latest = run
         c = statement.content
-        debit, credit = int(c["debit_minor"]), int(c["credit_minor"])
+        debit, credit = statement_content.debit_credit(c)
         if debit or credit:
             nodes[MESH_NODE] = GraphNode(id=MESH_NODE, label=MESH_COUNTERPARTY, kind="MESH")
             transfers.append(
@@ -210,7 +211,7 @@ def member_network(session: Session, member_id: UUID) -> NetworkView:
                     id="tr:own",
                     source=SELF_NODE if debit else MESH_NODE,
                     target=MESH_NODE if debit else SELF_NODE,
-                    currency=str(c["settlement_currency"]),
+                    currency=statement_content.settlement_currency(c),
                     amount_minor=debit or credit,
                     kind="SETTLEMENT",
                 )

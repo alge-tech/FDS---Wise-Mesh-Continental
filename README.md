@@ -51,6 +51,26 @@ Member APIs expose only the caller's invoices, terms and settlement; the counter
 transfer and ledger line is "Mesh settlement", and cross-member resources return 404.
 Residuals below the dust threshold are parked per member in SUSPENSE and paid out in the next run.
 
+Also from M6 (Should):
+
+- **Settings** (member admin): payable limit, maker-checker threshold and settlement currency
+  (`PATCH /v1/members/me/settings`), plus the team. Limits apply from the next computation; a
+  payer over its limit is left out and the rest recompute. The currency can't change while the
+  member still has invoices locked in an unfinished run.
+- **Withdraw** (member admin or finance user): on the statement, choose **Withdraw invoices**
+  (`POST /v1/runs/{id}/withdrawals`). The invoices return to the next window and the run
+  recomputes; this shares the recompute cap with rejections.
+- **Ring rule**: at freeze, a cycle of equal, round invoices (whole multiples of 1,000) between
+  members who joined in the last 90 days is held for review with a RING case. Seeded members A–F
+  are established, so the demo datasets never trigger it.
+- **Component isolation** (MC-NET-01): each connected component of the invoice graph nets on its
+  own. If one fails a check, its invoices go back to the next window with an ENGINE_ALERT case,
+  and the others still net.
+
+Statements follow the PRD's statement payload (Money objects, invoices grouped by counterparty,
+`instruction`, `approval`, `sha256:` content hash). Databases created before this change hold
+statements in the old shape: run **Reset demo data** (or `make reset`) after upgrading.
+
 M0–M5 are implemented. Seeded users keep stable IDs, so open sessions survive a demo reset
 (a database seeded before this change logs its sessions out once, at the first reset).
 

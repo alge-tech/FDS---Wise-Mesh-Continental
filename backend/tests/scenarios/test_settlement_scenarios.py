@@ -134,7 +134,7 @@ def test_dust_is_parked_in_suspense_and_paid_out_in_the_next_run(
     first = close(ops)
     s = own_statement(a, first["id"])
     assert s is not None
-    assert (s["content"]["net_minor"], s["content"]["carried_minor"]) == (0, -50)
+    assert (s["net"]["amount_minor"], s["carried"]["amount_minor"]) == (0, -50)
     approve_all(make_api, first["id"], codes="ab")
     assert ok(settle(ops, first["id"]))["status"] == "COMMITTED"
     assert (suspense(fresh_db, ids["a"]), suspense(fresh_db, ids["b"])) == (-50, 50)
@@ -144,7 +144,7 @@ def test_dust_is_parked_in_suspense_and_paid_out_in_the_next_run(
     second = close(ops)
     s = own_statement(a, second["id"])
     assert s is not None
-    assert s["content"]["net_minor"] == -10_050  # 100.00 plus the 0.50 carried in
+    assert s["net"]["amount_minor"] == -10_050  # 100.00 plus the 0.50 carried in
     metrics = admin_run(ops, second["id"])["computations"][0]["metrics"]
     assert sorted(c["amount_minor"] for c in metrics["carry_in_used"]) == [-50, 50]
     approve_all(make_api, second["id"], codes="ab")

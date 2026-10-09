@@ -20,6 +20,7 @@ from app.modules.runs.schemas import (
     WindowView,
 )
 from app.modules.settlement import reads as settlement
+from app.modules.statements import content as statement_content
 from app.modules.statements.models import Approval, Statement
 from app.modules.windows.eligibility import eligible, public_reason
 from app.modules.windows.models import Window
@@ -175,23 +176,37 @@ def statement_view(session: Session, actor: Principal, statement_id: UUID) -> St
         )
     )
     current = computation.attempt == run.current_attempt
-    return StatementView(
-        id=statement.id,
-        run_id=run.id,
-        run_status=run.status,
-        current=current,
-        current_statement_id=current_statement.id if current_statement else None,
-        content_hash=statement.content_hash,
-        content=statement.content,
-        required_approvers=statement.required_approvers,
-        approval_count=len(approvals),
-        can_approve=current
-        and run.status == "AWAITING_APPROVAL"
-        and permitted(actor, statement)
-        and len(approvals) < statement.required_approvers
-        and not any(a.approver_id == actor.user_id for a in approvals),
-        issued_at=statement.issued_at,
-        expires_at=statement.expires_at,
+    content = statement.content
+    return StatementView.model_validate(
+        {
+            **content,
+            "statement_id": statement.id,
+            "run_id": run.id,
+            "attempt": computation.attempt,
+            "member_id": statement.member_id,
+            "instruction": {
+                **content["instruction"],
+                "reference": statement_content.reference(run.id, statement.member_id),
+            },
+            "approval": {
+                "required_approvers": statement.required_approvers,
+                "deadline": statement.expires_at,
+                "approval_count": len(approvals),
+                "can_approve": current
+                and run.status == "AWAITING_APPROVAL"
+                and permitted(actor, statement)
+                and len(approvals) < statement.required_approvers
+                and not any(a.approver_id == actor.user_id for a in approvals),
+            },
+            "can_withdraw": current
+            and run.status in ("AWAITING_APPROVAL", "APPROVED")
+            and actor.role in (Role.MEMBER_ADMIN, Role.FINANCE_USER),
+            "content_hash": statement.content_hash,
+            "run_status": run.status,
+            "current": current,
+            "current_statement_id": current_statement.id if current_statement else None,
+            "issued_at": statement.issued_at,
+        }
     )
 
 

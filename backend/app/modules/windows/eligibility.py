@@ -83,8 +83,11 @@ def eligible(session: Session, window: Window) -> tuple[list[Invoice], list[Excl
 
 
 def public_reason(reason: R, excluded_member: UUID | None, viewer: UUID | None) -> R:
-    if reason in {R.SANCTIONS_HIT, R.HOLD_FOR_REVIEW}:
-        return R.UNDER_REVIEW if excluded_member == viewer else R.COUNTERPARTY_UNAVAILABLE
+    if reason in {R.SANCTIONS_HIT, R.HOLD_FOR_REVIEW, R.COMPONENT_FAILED}:
+        # Without a member to blame (ring hold, engine fault), every party sees a review.
+        if excluded_member is None or excluded_member == viewer:
+            return R.UNDER_REVIEW
+        return R.COUNTERPARTY_UNAVAILABLE
     if excluded_member is not None and excluded_member != viewer:
         return R.COUNTERPARTY_UNAVAILABLE
     return reason

@@ -3,19 +3,23 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { api, activeRun, refreshMesh, statementContentSchema } from '$lib/api/mesh';
+	import { api, activeRun, refreshMesh } from '$lib/api/mesh';
 	import { ApiError, unwrap } from '$lib/api/client';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import QueryState from '$lib/components/QueryState.svelte';
 	import Card from '$lib/components/Card.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Money from '$lib/components/Money.svelte';
+	import { localTime } from '$lib/dates';
 	let busy = $state(false);
 	let rejectOpen = $state(false);
 	let reason = $state('');
 	let error = $state('');
 	let success = $state('');
 	let changedId = $state<string | null>(null);
+	let withdrawOpen = $state(false);
+	let selected = $state<string[]>([]);
+	let withdrawReason = $state('');
 	const statement = createQuery(() => ({
 		queryKey: ['mesh', 'statement', page.params.id],
 		queryFn: () =>
@@ -26,9 +30,6 @@
 			),
 		refetchInterval: (q) => (activeRun(q.state.data?.run_status) ? 5000 : false)
 	}));
-	const content = $derived(
-		statement.data ? statementContentSchema.safeParse(statement.data.content) : null
-	);
 	async function answer(decision: 'APPROVE' | 'REJECT') {
 		if (!statement.data) return;
 		busy = true;
@@ -37,7 +38,7 @@
 		try {
 			const run = await unwrap(
 				api.POST('/v1/statements/{statement_id}/approvals', {
-					params: { path: { statement_id: statement.data.id } },
+					params: { path: { statement_id: statement.data.statement_id } },
 					body: {
 						decision,
 						content_hash: statement.data.content_hash,
@@ -59,6 +60,26 @@
 			busy = false;
 		}
 	}
+	async function withdraw(event: SubmitEvent) {
+		event.preventDefault();
+		if (!statement.data || !selected.length) return;
+		busy = true;
+		error = '';
+		try {
+			const run = await unwrap(
+				api.POST('/v1/runs/{run_id}/withdrawals', {
+					params: { path: { run_id: statement.data.run_id } },
+					body: { invoice_ids: selected, reason_code: withdrawReason }
+				})
+			);
+			await refreshMesh();
+			await goto(resolve('/(member)/runs/[id]', { id: run.id }));
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Withdrawal failed.';
+		} finally {
+			busy = false;
+		}
+	}
 </script>
 
 <svelte:head><title>Netting statement · Wise Mesh</title></svelte:head>
@@ -68,26 +89,31 @@
 		error={statement.error}
 		retry={() => statement.refetch()}
 	/>
-	{#if statement.data && content?.success}{@const s = statement.data}{@const c =
-			content.data}<PageHeader
+	{#if statement.data}{@const s = statement.data}<PageHeader
 			title="Your netting statement"
 			description="Review the exact terms before approving."
 		/>
 		<Card class="bg-brand-pale"
-			><p class="text-body-large-bold">{c.summary}</p>
-			<p class="mt-5 text-amount">
-				<Money
-					money={{ amount_minor: c.debit_minor || c.credit_minor, currency: c.settlement_currency }}
-				/>
+			><p class="text-body-large-bold">{s.summary}</p>
+			<p class="mt-5 text-amount"><Money money={s.instruction.amount} /></p>
+			<p class="mt-2">
+				{s.instruction.type === 'DEBIT'
+					? 'Debit'
+					: s.instruction.type === 'CREDIT'
+						? 'Credit'
+						: 'No payment'} · {s.instruction.counterparty} · Reference {s.instruction.reference}
 			</p>
-			<p class="mt-2">{c.debit_minor ? 'Debit' : 'Credit'} · Mesh settlement</p>
-			{#if c.carried_minor}<p>
-					Carried to the next window: <Money
-						signed
-						money={{ amount_minor: c.carried_minor, currency: c.settlement_currency }}
-					/>
+			{#if s.carried.amount_minor}<p>
+					Carried to the next window: <Money signed money={s.carried} />
 				</p>{/if}</Card
 		>
+		<dl class="grid gap-5 sm:grid-cols-3">
+			{#each [['Gross payable', s.gross_payable, false], ['Gross receivable', s.gross_receivable, false], ['Net position', s.net, true]] as const as [label, amount, signed] (label)}<div
+				>
+					<dt class="text-content-tertiary">{label}</dt>
+					<dd class="text-body-large-bold"><Money {signed} money={amount} /></dd>
+				</div>{/each}
+		</dl>
 		{#if !s.current}<div role="status" class="rounded-card bg-background-neutral p-5">
 				<p>This statement was replaced after a recompute.</p>
 				{#if s.current_statement_id}<Button
@@ -101,62 +127,92 @@
 				<table class="w-full text-left">
 					<thead
 						><tr
-							><th>Invoice / Counterparty</th><th>Direction</th><th class="text-right">Gross</th><th
-								class="text-right">Cancelled</th
+							>{#if withdrawOpen}<th><span class="sr-only">Withdraw</span></th>{/if}<th>Invoice</th
+							><th>Direction</th><th class="text-right">Gross</th><th class="text-right"
+								>Cancelled</th
 							><th class="text-right">Residual</th></tr
 						></thead
-					><tbody
-						>{#each c.invoices as i (i.invoice_id)}<tr class="border-t border-content-primary/10"
-								><td
-									><a
-										class="link-default"
-										href={resolve('/(member)/invoices/[id]', { id: i.invoice_id })}
-										>{i.invoice_number}</a
-									>
-									<p class="text-content-tertiary">{i.counterparty}</p></td
-								><td>{i.direction.toLowerCase()}</td><td class="text-right"
-									><Money money={{ amount_minor: i.outstanding_minor, currency: i.currency }} /></td
-								><td class="text-right"
-									><Money money={{ amount_minor: i.cancelled_minor, currency: i.currency }} /></td
-								><td class="text-right"
-									><Money money={{ amount_minor: i.residual_minor, currency: i.currency }} /></td
+					>{#each s.counterparties as group (group.name)}<tbody
+							><tr class="border-t border-content-primary/10"
+								><th colspan={withdrawOpen ? 6 : 5} scope="rowgroup" class="text-body-default-bold"
+									>{group.name}</th
 								></tr
-							>{/each}</tbody
-					>
+							>{#each group.invoices as i (i.invoice_id)}<tr
+									class="border-t border-content-primary/10"
+									>{#if withdrawOpen}<td
+											><input
+												type="checkbox"
+												aria-label={`Withdraw ${i.invoice_number}`}
+												value={i.invoice_id}
+												bind:group={selected}
+											/></td
+										>{/if}<td
+										><a
+											class="link-default"
+											href={resolve('/(member)/invoices/[id]', { id: i.invoice_id })}
+											>{i.invoice_number}</a
+										></td
+									><td>{i.direction.toLowerCase()}</td><td class="text-right"
+										><Money money={i.outstanding} /></td
+									><td class="text-right"><Money money={i.cancelled} /></td><td class="text-right"
+										><Money money={i.residual} /></td
+									></tr
+								>{/each}</tbody
+						>{/each}
 				</table>
 			</div>
+			{#if s.can_withdraw && !withdrawOpen}<div class="mt-4">
+					<Button variant="secondary" onclick={() => (withdrawOpen = true)}
+						>Withdraw invoices</Button
+					>
+				</div>{/if}
+			{#if withdrawOpen}<form class="mt-4 flex max-w-xl flex-col gap-4" onsubmit={withdraw}>
+					<p>
+						Select the invoices to take out of this run, for example ones already paid outside Mesh.
+						They return to the next window, and Mesh recomputes the run and issues new statements
+						where terms change.
+					</p>
+					<label>Reason<input bind:value={withdrawReason} required /></label>
+					<div class="flex gap-3">
+						<Button type="submit" loading={busy} disabled={!selected.length}
+							>Withdraw {selected.length}
+							{selected.length === 1 ? 'invoice' : 'invoices'}</Button
+						><Button
+							variant="link"
+							onclick={() => {
+								withdrawOpen = false;
+								selected = [];
+							}}>Cancel</Button
+						>
+					</div>
+				</form>{/if}
 		</section>
 		<Card
 			><h2 class="mb-5 text-title-group">Fees and savings</h2>
 			<dl class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-				{#each [['Baseline cost', c.pricing.baseline_minor], ['Mesh fee', c.pricing.fee_minor], ['Actual cost', c.pricing.actual_minor], ['Your savings', c.pricing.net_benefit_minor]] as [label, amount] (label)}<div
+				{#each [['Baseline cost', s.pricing.baseline], ['Mesh fee', s.fee], ['Actual cost', s.pricing.actual], ['Your savings', s.pricing.net_benefit]] as const as [label, amount] (label)}<div
 					>
 						<dt class="text-content-tertiary">{label}</dt>
-						<dd class="text-body-large-bold">
-							<Money money={{ amount_minor: Number(amount), currency: c.settlement_currency }} />
-						</dd>
+						<dd class="text-body-large-bold"><Money money={amount} /></dd>
 					</div>{/each}
 			</dl>
-			<p class="mt-4 text-content-tertiary">Price version {c.pricing.price_version}</p></Card
+			<p class="mt-4 text-content-tertiary">Price version {s.price_version}</p></Card
 		>
-		{#if c.fx_legs.length}<section>
+		{#if s.fx_legs.length}<section>
 				<h2 class="mb-4 text-title-group">Currency conversions</h2>
-				{#each c.fx_legs as fx, index (index)}<p>
-						<Money
-							signed
-							money={{ amount_minor: fx.from_amount_minor, currency: fx.from_currency }}
-						/> to <Money
-							signed
-							money={{ amount_minor: fx.to_amount_minor, currency: fx.to_currency }}
-						/> at {fx.rate}
+				{#each s.fx_legs as fx, index (index)}<p>
+						<Money signed money={fx.from_amount} /> to <Money signed money={fx.to_amount} /> at {fx.rate}
 					</p>{/each}
 			</section>{/if}
 		<Card class="flex flex-col gap-5"
-			><p>{s.approval_count} of {s.required_approvers} approvals received.</p>
-			{#if s.required_approvers === 2}<p>
+			><p>
+				{s.approval.approval_count} of {s.approval.required_approvers} approvals received. Approve by
+				{localTime(s.approval.deadline)}.
+			</p>
+			{#if s.approval.required_approvers === 2}<p>
 					Two different approvers are required above your member’s threshold.
 				</p>{/if}
-			{#if s.can_approve}<div class="flex gap-3">
+			{#if s.approval.can_approve}<div class="flex gap-3">
 					<Button loading={busy} onclick={() => answer('APPROVE')}>Approve statement</Button><Button
 						variant="secondary"
 						disabled={busy}
@@ -171,7 +227,7 @@
 								? 'This run has settled. Only the net amount moved.'
 								: s.run_status === 'ABORTED'
 									? 'This run was cancelled. Your invoices return to the next window.'
-									: s.approval_count >= s.required_approvers
+									: s.approval.approval_count >= s.approval.required_approvers
 										? 'Your statement has all required approvals. Waiting for the other members.'
 										: 'No approval action is available for your role or this statement.'}
 				</p>{/if}
@@ -200,7 +256,5 @@
 					href={resolve('/(member)/statements/[id]', { id: changedId })}
 					>Review updated statement</Button
 				>{/if}{#if success}<p role="status">{success}</p>{/if}
-		</Card>{:else if statement.data && content && !content.success}<p role="alert">
-			The statement could not be displayed. Reload the page.
-		</p>{/if}
+		</Card>{/if}
 </div>

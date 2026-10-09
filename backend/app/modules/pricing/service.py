@@ -23,6 +23,7 @@ from app.modules.pricing.schemas import (
 from app.modules.runs import repository
 from app.modules.runs import service as runs
 from app.modules.runs.models import NettingRun, RunComputation
+from app.modules.statements import content as statement_content
 from app.modules.statements.models import Statement
 
 
@@ -35,13 +36,17 @@ def pricing_inputs(
 ) -> list[MemberPricingInput]:
     """Each statement's own invoices and net, priced exactly as the computation priced them."""
     payables = [
-        (s.member_id, str(i["currency"]), int(i["outstanding_minor"]))
+        (s.member_id, str(i["outstanding"]["currency"]), int(i["outstanding"]["amount_minor"]))
         for s in statements
-        for i in s.content["invoices"]
+        for i in statement_content.invoices(s.content)
         if i["direction"] == "PAYABLE"
     ]
     positions = [
-        (s.member_id, str(s.content["settlement_currency"]), int(s.content["net_minor"]))
+        (
+            s.member_id,
+            statement_content.settlement_currency(s.content),
+            int(s.content["net"]["amount_minor"]),
+        )
         for s in statements
     ]
     return runs.pricing_inputs(
@@ -76,7 +81,8 @@ def savings(session: Session, member_id: UUID) -> SavingsSummary:
         if statement is None or fee is None:
             continue
         [own] = pricing_inputs(session, run, [statement])
-        c, settled = statement.content, run.status == RunStatus.COMMITTED
+        debit, credit = statement_content.debit_credit(statement.content)
+        settled = run.status == RunStatus.COMMITTED
         items.append(
             SavingsItem(
                 run_id=run.id,
@@ -85,8 +91,8 @@ def savings(session: Session, member_id: UUID) -> SavingsSummary:
                 settled_at=run.finished_at if settled else None,
                 currency=fee.currency,
                 gross_payable=money(own.gross_payable_minor, fee.currency),
-                net_paid=money(int(c["debit_minor"]), fee.currency),
-                net_received=money(int(c["credit_minor"]), fee.currency),
+                net_paid=money(debit, fee.currency),
+                net_received=money(credit, fee.currency),
                 baseline=money(fee.baseline_minor, fee.currency),
                 actual=money(fee.actual_minor, fee.currency),
                 fee=money(fee.fee_minor, fee.currency),

@@ -37,10 +37,7 @@
 			),
 		enabled: !!statement.data?.statement_id
 	}));
-	const price = $derived(
-		pricing.data?.content.pricing as
-			{ standard_rate_bps?: number; fee_share_bps?: number } | undefined
-	);
+	const price = $derived(pricing.data?.pricing);
 </script>
 
 <div class="flex flex-col gap-8">

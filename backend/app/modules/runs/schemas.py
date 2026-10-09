@@ -1,11 +1,13 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 
-from app.core.schemas import ApiModel, StrictModel
+from app.core.schemas import ApiModel, Money, StrictModel
 from app.modules.settlement.schemas import MemberSettlement, SettlementDetail
+
+CONTENT_HASH_PATTERN = r"^sha256:[0-9a-f]{64}$"
 
 
 class CloseRequest(StrictModel):
@@ -21,8 +23,19 @@ class CloseRequest(StrictModel):
 
 class ApprovalRequest(StrictModel):
     decision: Literal["APPROVE", "REJECT"]
-    content_hash: str = Field(min_length=64, max_length=64)
+    content_hash: str = Field(pattern=CONTENT_HASH_PATTERN)
     reason_code: str | None = None
+
+
+UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
+
+class WithdrawalRequest(CloseRequest):
+    """MC-APR-03: invoices from the caller's current statement, plus a reason."""
+
+    invoice_ids: list[Annotated[str, Field(pattern=UUID_PATTERN)]] = Field(
+        min_length=1, max_length=500
+    )
 
 
 class KillRequest(StrictModel):
@@ -71,19 +84,78 @@ class RunView(ApiModel):
     settlement_detail: SettlementDetail | None = None
 
 
+class StatementInvoice(ApiModel):
+    invoice_id: UUID
+    invoice_number: str
+    version: int
+    direction: Literal["PAYABLE", "RECEIVABLE"]
+    outstanding: Money
+    cancelled: Money
+    residual: Money
+
+
+class StatementCounterparty(ApiModel):
+    name: str
+    invoices: list[StatementInvoice]
+
+
+class StatementFxLeg(ApiModel):
+    from_amount: Money
+    to_amount: Money
+    rate: str  # decimal string, never a float
+
+
+class StatementPricing(ApiModel):
+    baseline: Money
+    actual: Money
+    net_benefit: Money
+    standard_rate_bps: int
+    fee_share_bps: int
+
+
+class StatementInstruction(ApiModel):
+    type: Literal["DEBIT", "CREDIT", "NONE"]
+    counterparty: str
+    amount: Money
+    reference: str
+
+
+class StatementApproval(ApiModel):
+    required_approvers: int
+    deadline: datetime
+    approval_count: int
+    can_approve: bool
+
+
 class StatementView(ApiModel):
-    id: UUID
+    """PRD "Statement payload". `content_hash` covers the economic fields only (not the IDs,
+    attempt, reference or approval block), so it survives a recompute that changes nothing."""
+
+    statement_id: UUID
     run_id: UUID
+    attempt: int
+    member_id: UUID
+    summary: str
+    counterparties: list[StatementCounterparty]
+    gross_payable: Money
+    gross_receivable: Money
+    net: Money
+    carried: Money
+    fx_legs: list[StatementFxLeg]
+    fee: Money
+    savings: Money
+    pricing: StatementPricing
+    price_version: str
+    rules_version: str
+    instruction: StatementInstruction
+    approval: StatementApproval
+    # MC-APR-03: the caller may take its own invoices out while the run awaits approval.
+    can_withdraw: bool
+    content_hash: str
     run_status: str
     current: bool
     current_statement_id: UUID | None
-    content_hash: str
-    content: dict[str, Any]
-    required_approvers: int
-    approval_count: int
-    can_approve: bool
     issued_at: datetime
-    expires_at: datetime
 
 
 class KillView(ApiModel):

@@ -55,8 +55,7 @@
         "additionalProperties": false,
         "properties": {
           "content_hash": {
-            "maxLength": 64,
-            "minLength": 64,
+            "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Content Hash",
             "type": "string"
           },
@@ -1572,6 +1571,13 @@
           },
           "state": {
             "$ref": "#/components/schemas/MemberState"
+          },
+          "team": {
+            "items": {
+              "$ref": "#/components/schemas/TeamMember"
+            },
+            "title": "Team",
+            "type": "array"
           }
         },
         "required": [
@@ -1583,7 +1589,8 @@
           "settlement_currency",
           "payable_limit",
           "maker_checker_threshold",
-          "balances"
+          "balances",
+          "team"
         ],
         "title": "MemberDetail",
         "type": "object"
@@ -2503,6 +2510,59 @@
         "title": "SavingsTotal",
         "type": "object"
       },
+      "SettingsUpdate": {
+        "additionalProperties": false,
+        "description": "MC-ONB-02. Omit a field to keep it; send null to remove a limit or threshold.\n\nAmounts are minor units of the settlement currency in force after this change.",
+        "properties": {
+          "maker_checker_minor": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maker Checker Minor"
+          },
+          "payable_limit_minor": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payable Limit Minor"
+          },
+          "reason_code": {
+            "default": "SETTINGS_UPDATED",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "settlement_currency": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Currency"
+          }
+        },
+        "title": "SettingsUpdate",
+        "type": "object"
+      },
       "SettlementDetail": {
         "description": "Wise staff view of a run's settlement: holds, jobs, transfers and clearing.",
         "properties": {
@@ -2582,7 +2642,7 @@
         "title": "Simulate",
         "type": "object"
       },
-      "StatementView": {
+      "StatementApproval": {
         "properties": {
           "approval_count": {
             "title": "Approval Count",
@@ -2592,14 +2652,201 @@
             "title": "Can Approve",
             "type": "boolean"
           },
-          "content": {
-            "additionalProperties": true,
-            "title": "Content",
-            "type": "object"
+          "deadline": {
+            "format": "date-time",
+            "title": "Deadline",
+            "type": "string"
+          },
+          "required_approvers": {
+            "title": "Required Approvers",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "required_approvers",
+          "deadline",
+          "approval_count",
+          "can_approve"
+        ],
+        "title": "StatementApproval",
+        "type": "object"
+      },
+      "StatementCounterparty": {
+        "properties": {
+          "invoices": {
+            "items": {
+              "$ref": "#/components/schemas/StatementInvoice"
+            },
+            "title": "Invoices",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "invoices"
+        ],
+        "title": "StatementCounterparty",
+        "type": "object"
+      },
+      "StatementFxLeg": {
+        "properties": {
+          "from_amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "rate": {
+            "title": "Rate",
+            "type": "string"
+          },
+          "to_amount": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "from_amount",
+          "to_amount",
+          "rate"
+        ],
+        "title": "StatementFxLeg",
+        "type": "object"
+      },
+      "StatementInstruction": {
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "counterparty": {
+            "title": "Counterparty",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "DEBIT",
+              "CREDIT",
+              "NONE"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "counterparty",
+          "amount",
+          "reference"
+        ],
+        "title": "StatementInstruction",
+        "type": "object"
+      },
+      "StatementInvoice": {
+        "properties": {
+          "cancelled": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "direction": {
+            "enum": [
+              "PAYABLE",
+              "RECEIVABLE"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "invoice_id": {
+            "format": "uuid",
+            "title": "Invoice Id",
+            "type": "string"
+          },
+          "invoice_number": {
+            "title": "Invoice Number",
+            "type": "string"
+          },
+          "outstanding": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "residual": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "invoice_id",
+          "invoice_number",
+          "version",
+          "direction",
+          "outstanding",
+          "cancelled",
+          "residual"
+        ],
+        "title": "StatementInvoice",
+        "type": "object"
+      },
+      "StatementPricing": {
+        "properties": {
+          "actual": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "baseline": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "fee_share_bps": {
+            "title": "Fee Share Bps",
+            "type": "integer"
+          },
+          "net_benefit": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "standard_rate_bps": {
+            "title": "Standard Rate Bps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "baseline",
+          "actual",
+          "net_benefit",
+          "standard_rate_bps",
+          "fee_share_bps"
+        ],
+        "title": "StatementPricing",
+        "type": "object"
+      },
+      "StatementView": {
+        "description": "PRD \"Statement payload\". `content_hash` covers the economic fields only (not the IDs,\nattempt, reference or approval block), so it survives a recompute that changes nothing.",
+        "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/StatementApproval"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "can_withdraw": {
+            "title": "Can Withdraw",
+            "type": "boolean"
+          },
+          "carried": {
+            "$ref": "#/components/schemas/Money"
           },
           "content_hash": {
             "title": "Content Hash",
             "type": "string"
+          },
+          "counterparties": {
+            "items": {
+              "$ref": "#/components/schemas/StatementCounterparty"
+            },
+            "title": "Counterparties",
+            "type": "array"
           },
           "current": {
             "title": "Current",
@@ -2617,24 +2864,48 @@
             ],
             "title": "Current Statement Id"
           },
-          "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
+          "fee": {
+            "$ref": "#/components/schemas/Money"
           },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
+          "fx_legs": {
+            "items": {
+              "$ref": "#/components/schemas/StatementFxLeg"
+            },
+            "title": "Fx Legs",
+            "type": "array"
+          },
+          "gross_payable": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "gross_receivable": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "instruction": {
+            "$ref": "#/components/schemas/StatementInstruction"
           },
           "issued_at": {
             "format": "date-time",
             "title": "Issued At",
             "type": "string"
           },
-          "required_approvers": {
-            "title": "Required Approvers",
-            "type": "integer"
+          "member_id": {
+            "format": "uuid",
+            "title": "Member Id",
+            "type": "string"
+          },
+          "net": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "price_version": {
+            "title": "Price Version",
+            "type": "string"
+          },
+          "pricing": {
+            "$ref": "#/components/schemas/StatementPricing"
+          },
+          "rules_version": {
+            "title": "Rules Version",
+            "type": "string"
           },
           "run_id": {
             "format": "uuid",
@@ -2644,23 +2915,75 @@
           "run_status": {
             "title": "Run Status",
             "type": "string"
+          },
+          "savings": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "statement_id": {
+            "format": "uuid",
+            "title": "Statement Id",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
           }
         },
         "required": [
-          "id",
+          "statement_id",
           "run_id",
+          "attempt",
+          "member_id",
+          "summary",
+          "counterparties",
+          "gross_payable",
+          "gross_receivable",
+          "net",
+          "carried",
+          "fx_legs",
+          "fee",
+          "savings",
+          "pricing",
+          "price_version",
+          "rules_version",
+          "instruction",
+          "approval",
+          "can_withdraw",
+          "content_hash",
           "run_status",
           "current",
           "current_statement_id",
-          "content_hash",
-          "content",
-          "required_approvers",
-          "approval_count",
-          "can_approve",
-          "issued_at",
-          "expires_at"
+          "issued_at"
         ],
         "title": "StatementView",
+        "type": "object"
+      },
+      "TeamMember": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "display_name",
+          "role"
+        ],
+        "title": "TeamMember",
         "type": "object"
       },
       "TransferView": {
@@ -2846,6 +3169,34 @@
           "exclusions"
         ],
         "title": "WindowView",
+        "type": "object"
+      },
+      "WithdrawalRequest": {
+        "additionalProperties": false,
+        "description": "MC-APR-03: invoices from the caller's current statement, plus a reason.",
+        "properties": {
+          "invoice_ids": {
+            "items": {
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "type": "string"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Invoice Ids",
+            "type": "array"
+          },
+          "reason_code": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Reason Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason_code",
+          "invoice_ids"
+        ],
+        "title": "WithdrawalRequest",
         "type": "object"
       }
     }
@@ -4371,6 +4722,65 @@
         ]
       }
     },
+    "/v1/members/me/settings": {
+      "patch": {
+        "operationId": "update_settings_v1_members_me_settings_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Settings",
+        "tags": [
+          "members"
+        ]
+      }
+    },
     "/v1/network/me": {
       "get": {
         "description": "Own counterparties and flows only; the settlement counterparty is Mesh settlement.",
@@ -4577,6 +4987,76 @@
           }
         },
         "summary": "Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/withdrawals": {
+      "post": {
+        "description": "MC-APR-03: withdraw own invoices from the run; the run recomputes.",
+        "operationId": "withdraw_v1_runs__run_id__withdrawals_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Withdraw",
         "tags": [
           "runs"
         ]

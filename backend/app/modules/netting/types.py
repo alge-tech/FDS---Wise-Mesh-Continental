@@ -124,7 +124,7 @@ class Carry:
 @dataclass(frozen=True)
 class DroppedInvoice:
     invoice_id: UUID
-    reason: str  # MEMBER_EXCLUDED, LIMIT_EXCEEDED or NO_RATE
+    reason: str  # MEMBER_EXCLUDED, LIMIT_EXCEEDED, NO_RATE or COMPONENT_FAILED
 
 
 @dataclass(frozen=True)
@@ -142,6 +142,8 @@ class Metrics:
     limit_restarts: int
     dust_carried: int
     improvement_ops: int
+    component_count: int = 1
+    failed_components: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -158,6 +160,8 @@ class Metrics:
             "limit_restarts": self.limit_restarts,
             "dust_carried": self.dust_carried,
             "improvement_ops": self.improvement_ops,
+            "component_count": self.component_count,
+            "failed_components": self.failed_components,
         }
 
 
@@ -176,6 +180,8 @@ class EngineResult:
     input_hash: str
     result_hash: str
     seed: int
+    # MC-NET-01: why each failed component was dropped (the other components still net).
+    component_errors: tuple[str, ...] = ()
 
 
 class EngineInvariantError(RuntimeError):

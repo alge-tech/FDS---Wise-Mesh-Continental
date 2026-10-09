@@ -1,14 +1,24 @@
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.errors import NotFound, Unauthenticated
+from app.core.errors import InvalidState, NotFound, Unauthenticated, ValidationFailed
 from app.core.ratelimit import check_login_allowed
 from app.core.schemas import money
 from app.core.security import MemberContext, Principal, verify_password
+from app.modules.audit import service as audit
+from app.modules.fx.models import Currency
 from app.modules.ledger import service as ledger
 from app.modules.members import repository as repo
-from app.modules.members.models import User
-from app.modules.members.schemas import BalanceOut, Me, MemberDetail, MemberSummary
+from app.modules.members.models import Member, User
+from app.modules.members.schemas import (
+    BalanceOut,
+    Me,
+    MemberDetail,
+    MemberSummary,
+    SettingsUpdate,
+    TeamMember,
+)
 
 
 def authenticate(session: Session, email: str, password: str, ip: str) -> User:
@@ -71,4 +81,60 @@ def member_detail(session: Session, ctx: MemberContext) -> MemberDetail:
         if member.maker_checker_minor is not None
         else None,
         balances=balances,
+        team=[
+            TeamMember(user_id=u.id, email=u.email, display_name=u.display_name, role=u.role)
+            for u in repo.team(session, member.id)
+        ],
     )
+
+
+def update_settings(session: Session, ctx: MemberContext, body: SettingsUpdate) -> MemberDetail:
+    """MC-ONB-02: the member admin edits limits, the threshold and the settlement currency.
+
+    Limits and the threshold apply from the next computation. The settlement currency can't
+    change while the member is in an unfinished run, because its statement and holds use it.
+    """
+    member = session.scalar(select(Member).where(Member.id == ctx.member_id).with_for_update())
+    if member is None:
+        raise NotFound()
+    sent = body.model_fields_set - {"reason_code"}
+    if not sent:
+        raise ValidationFailed("Send at least one setting to change.")
+    before = {
+        "payable_limit_minor": member.payable_limit_minor,
+        "maker_checker_minor": member.maker_checker_minor,
+        "settlement_currency": member.settlement_currency,
+    }
+    if "settlement_currency" in sent:
+        currency = body.settlement_currency
+        if currency is None or session.get(Currency, currency) is None:
+            raise ValidationFailed(
+                "Choose a supported settlement currency.",
+                details={"fields": [{"field": "settlement_currency", "reason": "unsupported"}]},
+            )
+        if currency != member.settlement_currency and repo.in_active_run(session, member.id):
+            raise InvalidState(
+                "The settlement currency can't change while a run you are in is unfinished."
+            )
+        member.settlement_currency = currency
+    if "payable_limit_minor" in sent:
+        member.payable_limit_minor = body.payable_limit_minor
+    if "maker_checker_minor" in sent:
+        member.maker_checker_minor = body.maker_checker_minor
+    after = {
+        "payable_limit_minor": member.payable_limit_minor,
+        "maker_checker_minor": member.maker_checker_minor,
+        "settlement_currency": member.settlement_currency,
+    }
+    audit.record(
+        session,
+        actor=ctx.principal,
+        action="member.settings_changed",
+        subject_type="MEMBER",
+        subject_id=member.id,
+        before=before,
+        after=after,
+        reason_code=body.reason_code,
+    )
+    session.flush()
+    return member_detail(session, ctx)

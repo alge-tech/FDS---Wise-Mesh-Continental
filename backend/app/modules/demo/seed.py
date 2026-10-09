@@ -38,6 +38,7 @@ CURRENCIES = [
     ("CNY", 2, "Chinese yuan"),
 ]
 
+ESTABLISHED = datetime(2024, 3, 1, tzinfo=UTC)
 RATE_SOURCE = "Static demo table (illustrative mid-market, 2026-10-01)"
 RATES = [
     ("EUR", "USD", "1.0850"),
@@ -132,6 +133,8 @@ def seed(session: Session) -> None:
             payable_limit_minor=m.payable_limit_major * 100 if m.payable_limit_major else None,
             maker_checker_minor=m.maker_checker_major * 100 if m.maker_checker_major else None,
             agreement_version="2026-10",
+            # Established businesses: the ring rule (MC-RSK-02) only looks at new members.
+            created_at=ESTABLISHED,
         )
         session.add(member)
         session.flush()

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 import networkx as nx
 
-from app.modules.netting.types import Cancellation, Edge
+from app.modules.netting.types import Cancellation, Edge, EngineInvariantError
 
 
 @dataclass
@@ -35,7 +35,7 @@ class _Bundle:
                 amount -= take
                 out.append(Cancellation(edge.invoice_id, cycle_no, take))
         if amount:
-            raise AssertionError("cancelled more than the bundle holds")
+            raise EngineInvariantError("MC-NET-02: cancelled more than the bundle holds")
 
 
 def cancel_cycles(edges: tuple[Edge, ...]) -> tuple[list[Cancellation], int]:

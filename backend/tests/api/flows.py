@@ -45,7 +45,7 @@ def own_statement(api: Api, run_id: str) -> dict[str, Any] | None:
 
 def answer(api: Api, s: dict[str, Any], decision: str = "APPROVE") -> Any:
     return api.post(
-        f"/v1/statements/{s['id']}/approvals",
+        f"/v1/statements/{s['statement_id']}/approvals",
         json={"decision": decision, "content_hash": s["content_hash"]},
     )
 
@@ -56,7 +56,7 @@ def approve_all(make_api: Factory, run_id: str, codes: str = CODES) -> None:
         for kind in ("admin", "approver"):
             api = make_api(f"{kind}@member-{code}.test")
             s = own_statement(api, run_id)
-            if s and s["can_approve"]:
+            if s and s["approval"]["can_approve"]:
                 ok(answer(api, s))
 
 

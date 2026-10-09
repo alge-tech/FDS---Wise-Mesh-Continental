@@ -25,6 +25,7 @@ from app.modules.runs.schemas import (
     RunView,
     StatementView,
     WindowView,
+    WithdrawalRequest,
 )
 from app.modules.statements import service as statements
 
@@ -127,3 +128,26 @@ def switches(
     from app.modules.admin.service import set_switch
 
     return cast(AdminOverview, idem.run(session, lambda s: set_switch(s, actor, body)))
+
+
+@router.post("/runs/{run_id}/withdrawals", response_model=RunView)
+def withdraw(
+    run_id: UUID,
+    body: WithdrawalRequest,
+    ctx: MemberContext = Depends(member_context(Role.MEMBER_ADMIN, Role.FINANCE_USER)),
+    idem: Idempotency = Depends(idempotency),
+    session: Session = Depends(get_session),
+) -> RunView:
+    """MC-APR-03: withdraw own invoices from the run; the run recomputes."""
+    ids = {UUID(i) for i in body.invoice_ids}
+    return cast(
+        RunView,
+        idem.run(
+            session,
+            lambda s: reads.run_view(
+                s,
+                service.withdraw(s, ctx.principal, run_id, ids, body.reason_code),
+                ctx.member_id,
+            ),
+        ),
+    )

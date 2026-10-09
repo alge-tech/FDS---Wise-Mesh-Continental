@@ -89,19 +89,18 @@ def test_m4_gate_worked_example_settles_and_clearing_is_zero(
     for code, api in members.items():
         s = statements[code]
         assert s is not None
-        c = s["content"]
-        fees += c["pricing"]["fee_minor"]
+        fee = s["fee"]["amount_minor"]
+        fees += fee
         # G2: each member moved exactly its net position, fees aside.
         assert balances(api)["EUR"] == (
-            before[code] + c["net_minor"] - c["pricing"]["fee_minor"],
+            before[code] + s["net"]["amount_minor"] - fee,
             0,
         )
         mine = ok(api.get(f"/v1/runs/{run['id']}"))["settlement"]
         assert mine["status"] == "SETTLED"
         assert mine["counterparty"] == "Mesh settlement"
         assert all(line["counterparty"] == "Mesh settlement" for line in mine["ledger"])
-        expected = "DEBIT" if c["debit_minor"] else "CREDIT" if c["credit_minor"] else "NONE"
-        assert mine["instruction"] == expected
+        assert mine["instruction"] == s["instruction"]["type"]
     assert fees > 0
 
     a = members["a"]
@@ -165,12 +164,12 @@ def test_m4_gate_funding_failure_recomputes_new_statements(
     assert own_statement(c, run["id"]) is None
     assert {i["status"] for i in ok(c.get("/v1/invoices"))["items"]} == {"CONFIRMED"}
     assert old is not None
-    detail = ok(c.get(f"/v1/invoices/{old['content']['invoices'][0]['invoice_id']}"))
+    detail = ok(c.get(f"/v1/invoices/{old['counterparties'][0]['invoices'][0]['invoice_id']}"))
     assert detail["exclusions"][-1]["reason"] == "FUNDING_FAILED"
 
     a = make_api("finance@member-a.test")
     new = own_statement(a, run["id"])
-    assert new is not None and new["current"] and not new["approval_count"]
+    assert new is not None and new["current"] and not new["approval"]["approval_count"]
     cases = ok(make_api("compliance@wise.test").get("/v1/admin/cases"))["items"]
     assert [(k["type"], k["subject_name"]) for k in cases] == [("FUNDING", "Member C")]
     drain()
@@ -341,7 +340,7 @@ def test_multi_currency_commit_clears_every_currency(make_api: Factory, fresh_db
     approve_all(make_api, run["id"])
     f = make_api("finance@member-f.test")
     s = own_statement(f, run["id"])
-    assert s is not None and s["content"]["fx_legs"]
+    assert s is not None and s["fx_legs"]
     usd_before = balances(f)["USD"][0]
     with Session(fresh_db) as session:
         assert session.scalar(select(func.count()).select_from(FxLock)) == 1
@@ -349,7 +348,8 @@ def test_multi_currency_commit_clears_every_currency(make_api: Factory, fresh_db
     assert done["status"] == "COMMITTED"
     clearing = {c["currency"]: c["balance_minor"] for c in done["settlement_detail"]["clearing"]}
     assert clearing == {"EUR": 0, "USD": 0}
-    assert balances(f)["USD"][0] == usd_before + s["content"]["credit_minor"]
+    assert s["instruction"]["type"] == "CREDIT"
+    assert balances(f)["USD"][0] == usd_before + s["instruction"]["amount"]["amount_minor"]
     assert ok(ops.get("/v1/admin/ledger/check"))["ok"]
 
 

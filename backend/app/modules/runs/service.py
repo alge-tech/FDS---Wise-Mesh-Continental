@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict
+from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from app.core.enums import (
     ExclusionReason,
     InvoiceStatus,
     LedgerAccountType,
+    RiskDecisionKind,
     RunStatus,
 )
 from app.core.errors import Conflict, InvalidState, NotFound
@@ -35,6 +37,7 @@ from app.modules.netting.types import CarryIn, Edge, EngineInput, EngineInvarian
 from app.modules.pricing.calc import MemberPricingInput, compute_fees
 from app.modules.pricing.models import FeeCharge
 from app.modules.risk.models import Case, RiskDecision, SanctionsEntry
+from app.modules.risk.rules import RingInvoice, find_rings
 from app.modules.runs import repository
 from app.modules.runs.models import (
     Cancellation,
@@ -43,7 +46,9 @@ from app.modules.runs.models import (
     NettingRun,
     PlannedTransfer,
     RunComputation,
+    Withdrawal,
 )
+from app.modules.statements import content as statement_content
 from app.modules.statements.builder import build
 from app.modules.statements.models import Approval, Statement
 from app.modules.windows.eligibility import eligible, public_reason
@@ -259,6 +264,7 @@ def close(session: Session, actor: Principal, reason: str) -> NettingRun:
         if hit:
             exclude(session, run, i, ExclusionReason.SANCTIONS_HIT, hit)
             release(session, run, i, "SANCTIONS_HIT")
+    hold_rings(session, run)
     change(session, run, RunStatus.SCREENED, None, "SCREENING_COMPLETE")
     compute(session, run, blocked, "WINDOW_CLOSE")
     return run
@@ -328,6 +334,135 @@ def screen(
     return blocked
 
 
+def hold_rings(session: Session, run: NettingRun) -> int:
+    """MC-RSK-02: hold every ring's invoices for review and open one RING case per ring."""
+    settings = get_settings()
+    since = utcnow() - timedelta(days=settings.ring_recent_days)
+    recent = set(session.scalars(select(Member.id).where(Member.created_at >= since)))
+    if not recent:
+        return 0
+    rows = session.execute(
+        select(RunInvoice, Invoice)
+        .join(Invoice, Invoice.id == RunInvoice.invoice_id)
+        .where(RunInvoice.run_id == run.id, Invoice.status == InvoiceStatus.LOCKED_IN_RUN)
+        .order_by(RunInvoice.invoice_id)
+    ).all()
+    invoices = {i.id: i for _, i in rows}
+    units = {
+        code: settings.ring_round_major * 10**exponent
+        for code, exponent in session.execute(select(Currency.code, Currency.exponent)).tuples()
+    }
+    rings = find_rings(
+        (
+            RingInvoice(
+                r.invoice_id,
+                r.payer_member_id,
+                r.receiver_member_id,
+                r.currency,
+                r.outstanding_minor,
+            )
+            for r, _ in rows
+        ),
+        recent,
+        units,
+    )
+    for ring in rings:
+        members = sorted({str(m) for r in ring for m in (r.payer, r.receiver)})
+        reasons = {
+            "members": members,
+            "currency": ring[0].currency,
+            "amount_minor": ring[0].amount_minor,
+            "invoice_ids": [str(r.invoice_id) for r in ring],
+        }
+        for r in ring:
+            invoice = invoices[r.invoice_id]
+            session.add(
+                RiskDecision(
+                    run_id=run.id,
+                    subject_type="INVOICE",
+                    subject_id=invoice.id,
+                    rule="RING",
+                    decision=RiskDecisionKind.HOLD_FOR_REVIEW,
+                    reasons=reasons,
+                )
+            )
+            exclude(session, run, invoice, ExclusionReason.HOLD_FOR_REVIEW, None)
+            release(session, run, invoice, "HOLD_FOR_REVIEW")
+        session.add(
+            Case(
+                type="RING",
+                subject_type="RUN",
+                subject_id=run.id,
+                run_id=run.id,
+                notes=(
+                    f"Ring of {len(ring)} invoices of {ring[0].currency} "
+                    f"{ring[0].amount_minor} minor units between {len(members)} new members."
+                ),
+            )
+        )
+        audit.record(
+            session,
+            actor=None,
+            action="risk.ring_held",
+            subject_type="RUN",
+            subject_id=run.id,
+            run_id=run.id,
+            reason_code="HOLD_FOR_REVIEW",
+            details=reasons,
+        )
+    return len(rings)
+
+
+def withdraw(
+    session: Session, actor: Principal, run_id: UUID, invoice_ids: set[UUID], reason: str
+) -> NettingRun:
+    """MC-APR-03: take some of the caller's own invoices out of the run, then recompute.
+
+    Like a rejection this is one exclusion event, so it counts towards the recompute cap.
+    """
+    assert actor.member_id is not None
+    if repository.get_for_member(session, actor.member_id, run_id) is None:
+        raise NotFound()
+    run = get_admin(session, run_id, lock=True)
+    if run.status not in (RunStatus.AWAITING_APPROVAL, RunStatus.APPROVED):
+        raise InvalidState("Invoices can only be withdrawn while the run awaits approval.")
+    current = repository.latest(session, run)
+    assert current is not None
+    statement = session.scalar(
+        select(Statement).where(
+            Statement.computation_id == current.id, Statement.member_id == actor.member_id
+        )
+    )
+    own = statement_content.invoice_ids(statement.content) if statement else set()
+    if not invoice_ids or not invoice_ids <= own:
+        raise NotFound("Those invoices are not on your current statement.")
+    for invoice in session.scalars(
+        select(Invoice).where(Invoice.id.in_(invoice_ids)).order_by(Invoice.id).with_for_update()
+    ):
+        session.add(
+            Withdrawal(
+                run_id=run.id,
+                member_id=actor.member_id,
+                invoice_id=invoice.id,
+                created_by=actor.user_id,
+            )
+        )
+        exclude(session, run, invoice, ExclusionReason.WITHDRAWN, actor.member_id, current.id)
+        release(session, run, invoice, "WITHDRAWN")
+    audit.record(
+        session,
+        actor=actor,
+        action="run.withdrawal",
+        subject_type="RUN",
+        subject_id=run.id,
+        run_id=run.id,
+        reason_code=reason,
+        details={"invoice_ids": sorted(str(i) for i in invoice_ids)},
+    )
+    recompute(session, run, {}, "WITHDRAWN")
+    return run
+
+
 def compute(session: Session, run: NettingRun, excluded: set[UUID], trigger: str) -> None:
     settings = get_settings()
     previous = repository.latest(session, run)
@@ -337,9 +472,15 @@ def compute(session: Session, run: NettingRun, excluded: set[UUID], trigger: str
         else []
     )
     members = {m.id: m for m in session.scalars(select(Member))}
+    # Released invoices (excluded members, withdrawals, ring holds, failed components) stay
+    # frozen for the input hash but are not netted again. Sessions don't autoflush.
+    session.flush()
     frozen = list(
         session.scalars(
-            select(RunInvoice).where(RunInvoice.run_id == run.id).order_by(RunInvoice.invoice_id)
+            select(RunInvoice)
+            .join(Invoice, Invoice.id == RunInvoice.invoice_id)
+            .where(RunInvoice.run_id == run.id, Invoice.status == InvoiceStatus.LOCKED_IN_RUN)
+            .order_by(RunInvoice.invoice_id)
         )
     )
     rates = snapshot_rates(session, run.id)
@@ -383,6 +524,27 @@ def compute(session: Session, run: NettingRun, excluded: set[UUID], trigger: str
         )
         finish_without_settlement(session, run, RunStatus.ABORTED, "ENGINE_INVARIANT")
         return
+    if result.component_errors:
+        # MC-NET-01: the failed components' invoices are released below; the rest still net.
+        session.add(
+            Case(
+                type="ENGINE_ALERT",
+                subject_type="RUN",
+                subject_id=run.id,
+                run_id=run.id,
+                notes="Component dropped: " + "; ".join(result.component_errors),
+            )
+        )
+        audit.record(
+            session,
+            actor=None,
+            action="run.component_failed",
+            subject_type="RUN",
+            subject_id=run.id,
+            run_id=run.id,
+            reason_code="COMPONENT_FAILED",
+            details={"errors": list(result.component_errors)},
+        )
     if not result.outcomes:
         finish_without_settlement(session, run, RunStatus.ABORTED, "NOTHING_TO_NET")
         return
@@ -412,15 +574,11 @@ def compute(session: Session, run: NettingRun, excluded: set[UUID], trigger: str
             (p for p in (invoice.payer_member_id, invoice.issuer_member_id) if p in all_excluded),
             None,
         )
-        reason = (
-            ExclusionReason.LIMIT_EXCEEDED
-            if dropped.reason == "LIMIT_EXCEEDED"
-            else (
-                ExclusionReason.NO_RATE
-                if dropped.reason == "NO_RATE"
-                else ExclusionReason.REJECTED_STATEMENT
-            )
-        )
+        reason = {
+            "LIMIT_EXCEEDED": ExclusionReason.LIMIT_EXCEEDED,
+            "NO_RATE": ExclusionReason.NO_RATE,
+            "COMPONENT_FAILED": ExclusionReason.COMPONENT_FAILED,
+        }.get(dropped.reason, ExclusionReason.REJECTED_STATEMENT)
         if dropped.reason != "MEMBER_EXCLUDED":
             exclude(session, run, invoice, reason, party, computation.id)
         release(session, run, invoice, reason)

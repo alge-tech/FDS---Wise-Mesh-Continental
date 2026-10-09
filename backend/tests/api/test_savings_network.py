@@ -33,15 +33,16 @@ def test_savings_after_settlement_match_the_statement(make_api: Factory) -> None
 
     s = own_statement(a, run["id"])
     assert s is not None
-    pricing = s["content"]["pricing"]
+    pricing = s["pricing"]
     body = ok(a.get("/v1/savings"))
     [item] = body["items"]
     assert item["settled"] and item["settled_at"]
     assert item["gross_payable"] == {"amount_minor": 10_000_000, "currency": "EUR"}
-    assert item["net_paid"]["amount_minor"] == s["content"]["debit_minor"]
-    assert item["baseline"]["amount_minor"] == pricing["baseline_minor"]
-    assert item["fee"]["amount_minor"] == pricing["fee_minor"]
-    assert item["savings"]["amount_minor"] == pricing["net_benefit_minor"] > 0
+    assert item["net_paid"] == s["instruction"]["amount"]
+    assert item["baseline"] == pricing["baseline"]
+    assert item["fee"] == s["fee"]
+    assert item["savings"] == pricing["net_benefit"]
+    assert item["savings"]["amount_minor"] > 0
     [total] = body["totals"]
     assert total["runs"] == 1 and total["savings"] == item["savings"]
 
@@ -66,12 +67,8 @@ def test_estimates_reuse_the_real_allocation_and_change_nothing(
             json={"run_id": run["id"], "standard_rate_bps": 52, "fee_share_bps": 2500},
         )
     )
-    p = s["content"]["pricing"]
-    assert (same["baseline"]["amount_minor"], same["fee"]["amount_minor"]) == (
-        p["baseline_minor"],
-        p["fee_minor"],
-    )
-    assert same["savings"]["amount_minor"] == p["net_benefit_minor"]
+    assert (same["baseline"], same["fee"]) == (s["pricing"]["baseline"], s["fee"])
+    assert same["savings"] == s["pricing"]["net_benefit"]
     assert same["source"] == "RUN" and same["break_even_fee_share_bps"] == 10_000
 
     typed = ok(
@@ -160,7 +157,7 @@ def test_member_network_shows_only_own_counterparties(make_api: Factory, fresh_d
     s = own_statement(a, run["id"])
     assert s is not None
     assert (transfer["source"], transfer["target"]) == ("self", "mesh")
-    assert transfer["amount_minor"] == s["content"]["debit_minor"]
+    assert transfer["amount_minor"] == s["instruction"]["amount"]["amount_minor"]
     ids = member_ids(fresh_db)
     raw = json.dumps(graph)
     assert not any(str(ids[c]) in raw for c in "def")  # no member beyond A's counterparties
