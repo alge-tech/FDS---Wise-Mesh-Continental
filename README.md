@@ -106,3 +106,5 @@ CSV uploads use `POST /v1/invoices/uploads` with a raw UTF-8 CSV body and `Conte
 Mutations require `X-Requested-With: mesh-web` and `Idempotency-Key` (except login/logout).
 After API changes, regenerate and keep `backend/openapi.json` and
 `frontend/src/lib/api/schema.d.ts` together.
+
+Aria was here
