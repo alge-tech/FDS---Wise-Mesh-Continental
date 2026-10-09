@@ -1,0 +1,220 @@
+"""Status vocabularies. Each is stored as TEXT with a CHECK list generated from these classes."""
+
+from enum import StrEnum
+
+
+class Role(StrEnum):
+    MEMBER_ADMIN = "MEMBER_ADMIN"
+    FINANCE_USER = "FINANCE_USER"
+    APPROVER = "APPROVER"
+    WISE_OPS = "WISE_OPS"
+    WISE_COMPLIANCE = "WISE_COMPLIANCE"
+
+
+MEMBER_ROLES = frozenset({Role.MEMBER_ADMIN, Role.FINANCE_USER, Role.APPROVER})
+STAFF_ROLES = frozenset({Role.WISE_OPS, Role.WISE_COMPLIANCE})
+
+
+class MemberState(StrEnum):
+    INVITED = "INVITED"
+    ONBOARDING = "ONBOARDING"
+    ACTIVE = "ACTIVE"
+    RESTRICTED = "RESTRICTED"
+    SUSPENDED = "SUSPENDED"
+    OFFBOARDED = "OFFBOARDED"
+
+
+NETTABLE_MEMBER_STATES = frozenset({MemberState.ACTIVE, MemberState.RESTRICTED})
+
+
+class RiskTier(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class KillSwitchScope(StrEnum):
+    GLOBAL = "GLOBAL"
+    MEMBER = "MEMBER"
+
+
+class InvoiceStatus(StrEnum):
+    IMPORTED = "IMPORTED"
+    MATCHED = "MATCHED"
+    UNMATCHED = "UNMATCHED"
+    REJECTED_DATA = "REJECTED_DATA"
+    PENDING_CONFIRMATION = "PENDING_CONFIRMATION"
+    CONFIRMED = "CONFIRMED"
+    AMENDED = "AMENDED"
+    DISPUTED = "DISPUTED"
+    LOCKED_IN_RUN = "LOCKED_IN_RUN"
+    RELEASED = "RELEASED"
+    SETTLED_BY_NETTING = "SETTLED_BY_NETTING"
+    SETTLED_BY_TRANSFER = "SETTLED_BY_TRANSFER"
+    CANCELLED = "CANCELLED"
+
+
+class InvoiceSource(StrEnum):
+    CSV = "CSV"
+    MANUAL = "MANUAL"
+    GENERATED = "GENERATED"
+    SCENARIO = "SCENARIO"
+
+
+class VersionChange(StrEnum):
+    CREATED = "CREATED"
+    CORRECTED = "CORRECTED"
+
+
+class ConfirmationDecision(StrEnum):
+    CONFIRMED = "CONFIRMED"
+    DISPUTED = "DISPUTED"
+
+
+class ConfirmationMethod(StrEnum):
+    USER = "USER"
+    AUTO = "AUTO"
+    SIMULATED = "SIMULATED"
+
+
+class DisputeReason(StrEnum):
+    NOT_RECOGNISED = "NOT_RECOGNISED"
+    WRONG_AMOUNT = "WRONG_AMOUNT"
+    ALREADY_PAID = "ALREADY_PAID"
+    GOODS_NOT_RECEIVED = "GOODS_NOT_RECEIVED"
+    OTHER = "OTHER"
+
+
+class InvitationStatus(StrEnum):
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    EXPIRED = "EXPIRED"
+
+
+class WindowStatus(StrEnum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+
+class RunStatus(StrEnum):
+    FROZEN = "FROZEN"
+    SCREENED = "SCREENED"
+    COMPUTED = "COMPUTED"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    APPROVED = "APPROVED"
+    PREPARED = "PREPARED"
+    RECOMPUTING = "RECOMPUTING"
+    COMMITTED = "COMMITTED"
+    FALLBACK_GROSS = "FALLBACK_GROSS"
+    ABORTED = "ABORTED"
+
+
+TERMINAL_RUN_STATES = frozenset({RunStatus.COMMITTED, RunStatus.FALLBACK_GROSS, RunStatus.ABORTED})
+
+
+class ExclusionReason(StrEnum):
+    """Why an invoice or member was left out of a run. Members see only public reasons."""
+
+    NOT_MATCHED = "NOT_MATCHED"
+    NOT_CONFIRMED = "NOT_CONFIRMED"
+    DISPUTED = "DISPUTED"
+    MEMBER_NOT_ACTIVE = "MEMBER_NOT_ACTIVE"
+    COUNTERPARTY_UNAVAILABLE = "COUNTERPARTY_UNAVAILABLE"
+    NO_RATE = "NO_RATE"
+    OUTSIDE_HORIZON = "OUTSIDE_HORIZON"
+    KILL_SWITCH = "KILL_SWITCH"
+    AGREEMENT_PENDING = "AGREEMENT_PENDING"
+    SANCTIONS_HIT = "SANCTIONS_HIT"
+    HOLD_FOR_REVIEW = "HOLD_FOR_REVIEW"
+    LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
+    WITHDRAWN = "WITHDRAWN"
+    REJECTED_STATEMENT = "REJECTED_STATEMENT"
+    APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
+    FUNDING_FAILED = "FUNDING_FAILED"
+    UNDER_REVIEW = "UNDER_REVIEW"
+
+
+class PartyType(StrEnum):
+    MEMBER = "MEMBER"
+    FX = "FX"
+    CARRY = "CARRY"
+
+
+class TransferKind(StrEnum):
+    SETTLEMENT = "SETTLEMENT"
+    FX_LEG = "FX_LEG"
+
+
+class TransferStatus(StrEnum):
+    PLANNED = "PLANNED"
+    SETTLED = "SETTLED"
+    CANCELLED = "CANCELLED"
+
+
+class ApprovalDecision(StrEnum):
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class ApprovalMethod(StrEnum):
+    USER = "USER"
+    CARRIED_FORWARD = "CARRIED_FORWARD"
+
+
+class HoldStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    CONSUMED = "CONSUMED"
+    RELEASED = "RELEASED"
+
+
+class SettlementStep(StrEnum):
+    PREPARE = "PREPARE"
+    COMMIT = "COMMIT"
+    ABORT = "ABORT"
+
+
+class JobStatus(StrEnum):
+    STARTED = "STARTED"
+    DONE = "DONE"
+    FAILED = "FAILED"
+
+
+class InvoiceOutcomeKind(StrEnum):
+    SETTLED_BY_NETTING = "SETTLED_BY_NETTING"
+    SETTLED_BY_TRANSFER = "SETTLED_BY_TRANSFER"
+
+
+class LedgerAccountType(StrEnum):
+    MEMBER_BALANCE = "MEMBER_BALANCE"
+    MEMBER_HOLD = "MEMBER_HOLD"
+    CLEARING = "CLEARING"
+    FX_CONVERSION = "FX_CONVERSION"
+    FEE_REVENUE = "FEE_REVENUE"
+    SUSPENSE = "SUSPENSE"
+
+
+class JournalKind(StrEnum):
+    OPENING = "OPENING"
+    HOLD = "HOLD"
+    COMMIT = "COMMIT"
+    RELEASE = "RELEASE"
+
+
+class RiskDecisionKind(StrEnum):
+    ALLOW = "ALLOW"
+    EXCLUDE = "EXCLUDE"
+    HOLD_FOR_REVIEW = "HOLD_FOR_REVIEW"
+    BLOCK = "BLOCK"
+
+
+class CaseType(StrEnum):
+    SANCTIONS = "SANCTIONS"
+    RING = "RING"
+    ENGINE_ALERT = "ENGINE_ALERT"
+    FUNDING = "FUNDING"
+
+
+class CaseStatus(StrEnum):
+    OPEN = "OPEN"
+    IN_REVIEW = "IN_REVIEW"
+    CLOSED = "CLOSED"

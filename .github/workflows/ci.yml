@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mesh
+          POSTGRES_PASSWORD: mesh
+          POSTGRES_DB: mesh
+        ports: ["5434:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mesh" --health-interval 2s --health-timeout 3s --health-retries 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.7"
+      - name: Create roles and test database
+        run: |
+          PGPASSWORD=mesh psql -h localhost -p 5434 -U mesh -d mesh -c "CREATE ROLE mesh_app LOGIN PASSWORD 'mesh_app';"
+          PGPASSWORD=mesh psql -h localhost -p 5434 -U mesh -d mesh -c "CREATE DATABASE mesh_test;"
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy app
+      - run: uv run pytest
+        env:
+          JWT_SECRET: ci-secret-0123456789abcdef0123456789abcdef
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run check
+      - run: bun run test
+      - run: bun run build
+
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.7"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+      - run: cd backend && uv sync --frozen && JWT_SECRET=x uv run python -m app.cli openapi openapi.json
+      - run: cd frontend && bun install --frozen-lockfile && bun run gen:api
+      - name: Fail on drift between the API and the generated client types
+        run: git diff --exit-code backend/openapi.json frontend/src/lib/api/schema.d.ts
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+      - run: cp .env.example .env && sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" .env
+      - run: docker compose up -d --build --wait
+      - run: cd frontend && bun install --frozen-lockfile && bunx playwright install --with-deps chromium
+      - run: cd frontend && bunx playwright test
+      - if: failure()
+        run: docker compose logs api
