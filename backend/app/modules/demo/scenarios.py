@@ -51,7 +51,7 @@ MEMBERS: tuple[SeedMember, ...] = (
         "EUR",
         None,
         50_000,
-        {"EUR": 120_000},
+        {"EUR": 120_000, "USD": 10_000},
     ),
     SeedMember(
         "C",
@@ -63,7 +63,7 @@ MEMBERS: tuple[SeedMember, ...] = (
         "EUR",
         None,
         50_000,
-        {"EUR": 120_000, "GBP": 10_000},
+        {"EUR": 120_000, "GBP": 10_000, "USD": 10_000},
     ),
     SeedMember(
         "D",
@@ -75,7 +75,7 @@ MEMBERS: tuple[SeedMember, ...] = (
         "EUR",
         None,
         50_000,
-        {"EUR": 100_000, "HUF": 5_000_000},
+        {"EUR": 100_000, "HUF": 5_000_000, "USD": 10_000},
     ),
     SeedMember(
         "E",
@@ -87,7 +87,7 @@ MEMBERS: tuple[SeedMember, ...] = (
         "EUR",
         None,
         50_000,
-        {"EUR": 100_000, "GBP": 20_000},
+        {"EUR": 100_000, "GBP": 20_000, "USD": 10_000},
     ),
     SeedMember(
         "F",
